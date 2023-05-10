@@ -4,6 +4,8 @@
 #include "Eigen/Sparse"
 #include <limits>
 
+
+
 double get_psi(double lambd, double mu, const Eigen::Matrix<double, 2, 2>& grad_u);
 Eigen::Matrix<double, 1, 4> get_psi_J(double lambd, double mu, const Eigen::Matrix<double, 2, 2>& grad_u);
 Eigen::Matrix<double, 4, 4> get_psi_H(double lambd, double mu, const Eigen::Matrix<double, 2, 2>& grad_u);
@@ -15,6 +17,11 @@ Eigen::Matrix<double, 2, 2> get_gradU(const Eigen::Matrix<double, 8, 1>& uparams
 Eigen::Matrix<double, 2, 1> local_to_global_deformed(const Eigen::Matrix<double, 8, 1>& uparams, const Eigen::Matrix<double, 8, 1>& eparams, const Eigen::Matrix<double, 2, 1>& isocoords);
 Eigen::Matrix<double, 2, 1> local_to_global_undeformed(const Eigen::Matrix<double, 8, 1>& eparams, const Eigen::Matrix<double, 2, 1>& isocoords);
 Eigen::Matrix<double, 4, 8> get_B_square(const Eigen::Matrix<double, 8, 1>& eparams, const Eigen::Matrix<double, 2, 1>& isocoords);
+
+struct QuadData {
+		double det = 0;
+		Eigen::Matrix<double, 4, 8> B;
+};
 
 struct FemProblem {
 		double lambda = 70;
@@ -40,6 +47,13 @@ struct FemProblem {
 
 		std::vector<double> node_xs;
 		std::vector<double> node_ys;
+
+		// unused (?)
+		// the information above, in element format
+		std::vector<double> element_nxys; // size=num_elements*8
+		std::vector<double> element_xys; // size=num_elements*8
+		std::vector<double> element_dof_idxs; // size=num_elements*8
+		std::vector<QuadData> gauss_pt_data; // size=num_elements*4 (4 for gauss points)
 
 		void assert_dofs() {
 				// count the number of -1 entires in problem.ux_dof_idxs
@@ -110,9 +124,18 @@ struct FemIteration {
 
 FemIteration create_fem_it(const FemProblem& problem);
 
+using PrescribedDisplacement = Eigen::Matrix<double, 2, 1>(*)(const FemProblem&, int nx, int ny);
+Eigen::Matrix<double, 2, 2> get_S(const FemProblem& problem, const FemIteration& it,
+																	PrescribedDisplacement,
+																	int nx, int ny, const Eigen::Matrix<double, 2, 1>& isocoords,
+																	Eigen::Matrix2d* gradU);
+
+
 
 Eigen::Vector2d get_deformed_coordinates(const FemProblem& problem, Eigen::Matrix<double, 2, 1>(*get_prescribed_displacement)(const FemProblem&, int nx, int ny), FemIteration& it, int nx, int ny);
 Eigen::Vector2d get_undeformed_coordinates(const FemProblem& problem, int nx, int ny);
 
 void update_problem(const FemProblem& problem, Eigen::Matrix<double, 2, 1>(*get_prescribed_displacement)(const FemProblem&, int nx, int ny), FemIteration& it);
+
+void update_problem_alt(const FemProblem& problem, Eigen::Matrix<double, 2, 1>(*get_prescribed_displacement)(const FemProblem&, int nx, int ny), FemIteration& it);
 

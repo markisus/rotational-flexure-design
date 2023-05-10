@@ -22,6 +22,68 @@ double quad_area(const Eigen::Matrix<double, 8, 1>& corners) {
     return 0.5 * ((x1*y2 + x2*y3 + x3*y4 + x4*y1)-(x2*y1 + x3*y2 + x4*y3 + x1*y4));
 }
 
+void _fill_element_data(FemProblem& problem) {
+		int num_xels = problem.num_xnodes-1;
+		int num_yels = problem.is_polar ? problem.num_ynodes : problem.num_ynodes-1;
+				
+		problem.element_xys.reserve(8*num_xels*num_yels);
+		problem.element_nxys.reserve(8*num_xels*num_yels);
+		problem.element_dof_idxs.reserve(8*num_xels*num_yels);
+		problem.gauss_pt_data.reserve(4*num_xels*num_yels);
+		
+		for (int nx = 0; nx < num_xels; ++nx) {
+				for (int ny=0; ny < num_yels; ++ny) {
+						// the corners of the element
+						// the mod % below is no-op in non-polar mode
+						// in polar mode, it just implements the wrap-around on the last element
+						std::array<std::pair<int, int>, 4> nxys = {
+								std::make_pair( nx, ny ),
+								std::make_pair( nx+1, ny ),
+								std::make_pair( nx+1, (ny+1)%problem.num_ynodes),
+								std::make_pair( nx, (ny+1)%problem.num_ynodes)
+						};
+
+						for (const auto& nxy : nxys) {
+								auto [nx, ny] = nxy;
+								// ui for idx into the us (dof) buffer
+								const int uix = problem.ux_dof_idxs[problem.num_xnodes*ny + nx];
+								const int uiy = problem.uy_dof_idxs[problem.num_xnodes*ny + nx];
+								problem.element_dof_idxs.push_back(uix);
+								problem.element_dof_idxs.push_back(uiy);
+								problem.element_nxys.push_back(nx);
+								problem.element_nxys.push_back(ny);
+						}
+
+
+						Eigen::Matrix<double, 8, 1> eparams;
+						int corner_idx = 0;
+						for (const auto& nxy : nxys) {
+								auto [nx, ny] = nxy;
+								const double ex = problem.node_xs[problem.num_xnodes*ny + nx];
+								const double ey = problem.node_ys[problem.num_xnodes*ny + nx];
+								problem.element_xys.push_back(ex);
+								problem.element_xys.push_back(ey);
+
+								eparams(2*corner_idx) = ex;
+								eparams(2*corner_idx+1) = ey;
+								corner_idx += 1;
+						}
+
+						const double c = 1.0/std::sqrt(3);
+						std::array<Eigen::Matrix<double, 2, 1>, 4> qs = {
+								{{-c, -c}, {c, -c}, {c, c}, {-c, c}}
+						};
+
+						for (const auto& q : qs) {
+								QuadData qd;
+								qd.det = std::abs(get_grad_phi_det(eparams, q));
+								qd.B = get_B_square(eparams, q);
+								problem.gauss_pt_data.push_back(qd);
+						}
+				}
+		}
+}
+
 FemProblem create_toy_problem(double length_x, double length_y, int num_xnodes, int num_ynodes) {
 		FemProblem problem;
 		problem.length_x = length_x;
@@ -56,6 +118,8 @@ FemProblem create_toy_problem(double length_x, double length_y, int num_xnodes, 
 						problem.num_dofs += 1;
 				}
 		}
+
+		_fill_element_data(problem);
 
 		problem.assert_dofs();
 
@@ -131,6 +195,7 @@ FemProblem create_polar_problem(double r0, double r1, int num_rnodes, int num_th
 				}
 		}
 
+		_fill_element_data(problem);
 		problem.assert_dofs();
 
 		return problem;
@@ -193,7 +258,73 @@ Eigen::Vector2d get_deformed_coordinates(const FemProblem& problem, Eigen::Matri
 		return result;
 }
 
+std::array<std::pair<int, int>, 4> get_nxys(int num_ynodes, int nx, int ny) {
+		return {
+				std::make_pair( nx, ny ),
+				std::make_pair( nx+1, ny ),
+				std::make_pair( nx+1, (ny+1)%num_ynodes),
+				std::make_pair( nx, (ny+1)%num_ynodes)
+		};
+}
+
+Eigen::Matrix<double, 8, 1> get_uparams(const FemProblem& problem, Eigen::Matrix<double, 2, 1>(*get_prescribed_displacement)(const FemProblem&, int nx, int ny),
+																				const FemIteration& it,
+																				const std::array<std::pair<int, int>, 4>& nxys, int* uis = nullptr) {
+		// assemble the dofs from global to local
+		Eigen::Matrix<double, 8, 1> uparams;
+		{
+				int corner_idx = 0;
+				for (const auto& nxy : nxys) {
+						auto [nx, ny] = nxy;
+
+						// ui for idx into the us (dof) buffer
+						const int uix = problem.ux_dof_idxs[problem.num_xnodes*ny + nx];
+						const int uiy = problem.uy_dof_idxs[problem.num_xnodes*ny + nx];
+
+						if (uis) {
+								uis[2*corner_idx] = uix;
+								uis[2*corner_idx+1] = uiy;
+						}
+
+						double ux = 0;
+						double uy = 0;
+								
+						if (uix < 0 || uiy < 0) {
+								auto prescribed_displacement = get_prescribed_displacement(problem, nx, ny);
+								ux = prescribed_displacement(0,0);
+								uy = prescribed_displacement(1,0);
+						} else {
+								ux = it.us[uix];
+								uy = it.us[uiy];
+						}
+								
+						uparams(2*corner_idx, 0) = ux;
+						uparams(2*corner_idx+1, 0) = uy;
+						corner_idx += 1;
+				}
+		}
+
+		return uparams;
+}
+
+Eigen::Matrix<double, 8, 1> get_eparams(const FemProblem& problem, const std::array<std::pair<int, int>, 4>& nxys) {
+		Eigen::Matrix<double, 8, 1> eparams;
+		int corner_idx = 0;
+		for (const auto& nxy : nxys) {
+				auto [nx, ny] = nxy;
+				const double ex = problem.node_xs[problem.num_xnodes*ny + nx];
+				const double ey = problem.node_ys[problem.num_xnodes*ny + nx];
+				eparams(2*corner_idx, 0) = ex;
+				eparams(2*corner_idx+1, 0) = ey;
+				corner_idx += 1;
+		}
+
+		return eparams;
+}
+
 void update_problem(const FemProblem& problem, Eigen::Matrix<double, 2, 1>(*get_prescribed_displacement)(const FemProblem&, int nx, int ny), FemIteration& it) {
+		// TickTock timer;
+		// timer.tick();
 		
 		if (it.us.rows() == 0) {
 				// it was not initialized
@@ -211,7 +342,7 @@ void update_problem(const FemProblem& problem, Eigen::Matrix<double, 2, 1>(*get_
 		it.sparse_coefficients.clear();
 		it.sparse_coefficients.reserve(problem.num_dofs*28);
 
-		// TickTock timer;
+
 
 		constexpr bool debug = false;
 
@@ -229,12 +360,7 @@ void update_problem(const FemProblem& problem, Eigen::Matrix<double, 2, 1>(*get_
 						// the corners of the element
 						// the mod % below is no-op in non-polar mode
 						// in polar mode, it just implements the wrap-around on the last element
-						std::array<std::pair<int, int>, 4> nxys = {
-								std::make_pair( nx, ny ),
-								std::make_pair( nx+1, ny ),
-								std::make_pair( nx+1, (ny+1)%problem.num_ynodes),
-								std::make_pair( nx, (ny+1)%problem.num_ynodes)
-						};
+						std::array<std::pair<int, int>, 4> nxys = get_nxys(problem.num_ynodes, nx, ny);
 
 						if (debug) {
 								std::cout << "Coordinates" << "\n";
@@ -245,54 +371,14 @@ void update_problem(const FemProblem& problem, Eigen::Matrix<double, 2, 1>(*get_
 						}
 
 						// assemble the dofs from global to local
-						Eigen::Matrix<double, 8, 1> uparams;
-						std::array<int, 8> uis; // local dof to global dof
-						{
-								int corner_idx = 0;
-								for (const auto& nxy : nxys) {
-										auto [nx, ny] = nxy;
-
-										// ui for idx into the us (dof) buffer
-										const int uix = problem.ux_dof_idxs[problem.num_xnodes*ny + nx];
-										const int uiy = problem.uy_dof_idxs[problem.num_xnodes*ny + nx];
-										uis[2*corner_idx] = uix;
-										uis[2*corner_idx+1] = uiy;
-
-										double ux = 0;
-										double uy = 0;
-								
-										if (uix < 0 || uiy < 0) {
-												auto prescribed_displacement = get_prescribed_displacement(problem, nx, ny);
-												ux = prescribed_displacement(0,0);
-												uy = prescribed_displacement(1,0);
-										} else {
-												ux = it.us[uix];
-												uy = it.us[uiy];
-										}
-								
-										uparams(2*corner_idx, 0) = ux;
-										uparams(2*corner_idx+1, 0) = uy;
-										corner_idx += 1;
-								}
-						}
+						std::array<int, 8> uis; // local dof to global dfo
+						Eigen::Matrix<double, 8, 1> uparams = get_uparams(problem, get_prescribed_displacement, it, nxys, uis.data());
 
 						if (debug) {
 								std::cout << "uparams " << uparams.transpose() << "\n";
 						}
 
-						
-						Eigen::Matrix<double, 8, 1> eparams;
-						{
-								int corner_idx = 0;
-								for (const auto& nxy : nxys) {
-										auto [nx, ny] = nxy;
-										const double ex = problem.node_xs[problem.num_xnodes*ny + nx];
-										const double ey = problem.node_ys[problem.num_xnodes*ny + nx];
-										eparams(2*corner_idx, 0) = ex;
-										eparams(2*corner_idx+1, 0) = ey;
-										corner_idx += 1;
-								}
-						}
+						Eigen::Matrix<double, 8, 1> eparams = get_eparams(problem, nxys);
 
 						if (debug) {
 								std::cout << "eparams " << eparams.transpose() << "\n";
@@ -456,6 +542,166 @@ void update_problem(const FemProblem& problem, Eigen::Matrix<double, 2, 1>(*get_
 		
 		it.us += dus;
 		it.last_change = it.Pi - last_Pi;
+
+		// timer.tock("update_problem");
+}
+
+void update_problem_alt(const FemProblem& problem, Eigen::Matrix<double, 2, 1>(*get_prescribed_displacement)(const FemProblem&, int nx, int ny), FemIteration& it) {
+		// this version actualy takes longer!!!
+		TickTock timer;
+		timer.tick();
+		
+		
+		if (it.us.rows() == 0) {
+				// it was not initialized
+				it = create_fem_it(problem);
+		}
+
+		assert(it.dPi_du.rows() != 0 && "dPi_du had 0 rows");
+		assert(it.d2Pi_du2.rows() != 0 && "dPi_du had 0 rows");
+
+		const double last_Pi = it.Pi;
+		
+		it.Pi = 0;
+		it.d2Pi_du2.setZero();
+		it.dPi_du.setZero();
+		it.sparse_coefficients.clear();
+		it.sparse_coefficients.reserve(problem.num_dofs*28);
+
+		// TickTock timer;
+
+		constexpr bool debug = false;
+
+		// timer.tick();
+
+		for (int ei = 0; ei < problem.element_xys.size()/8; ++ei) {
+				// assemble the dofs from global to local
+				Eigen::Matrix<double, 8, 1> eparams;
+				for (int i = 0; i < 8; ++i) {
+						eparams(i) = problem.element_xys[8*ei + i];
+				}
+
+				
+				std::array<int, 8> uis; // local dof to global dof
+				Eigen::Matrix<double, 8, 1> uparams;
+				for (int i = 0; i < 4; ++i) {
+						const int uix = problem.element_dof_idxs[8*ei + 2*i];
+						const int uiy = problem.element_dof_idxs[8*ei + 2*i + 1];
+						uis[2*i] = uix;
+						uis[2*i+1] = uiy;
+						
+						double ux = 0;
+						double uy = 0;
+						if (uix < 0 || uiy < 0) {
+								const int nx = problem.element_nxys[8*ei + 2*i];
+								const int ny = problem.element_nxys[8*ei + 2*i + 1];
+
+								auto prescribed_displacement = get_prescribed_displacement(problem, nx, ny);
+								ux = prescribed_displacement(0,0);
+								uy = prescribed_displacement(1,0);
+						} else {
+								ux = it.us[uix];
+								uy = it.us[uiy];
+						}
+
+						uparams(2*i) = ux;
+						uparams(2*i+1) = uy;
+				}
+								
+				// do gauss quadrature
+				const double c = 1.0/std::sqrt(3);
+				std::array<Eigen::Matrix<double, 2, 1>, 4> qs = {
+						{{-c, -c}, {c, -c}, {c, c}, {-c, c}}
+				};
+
+				double pi = 0;
+				auto dpi_du = Eigen::Matrix<double, 8, 1>::Zero().eval();
+				auto d2pi_du2 = Eigen::Matrix<double, 8, 8>::Zero().eval();
+				for (int i = 0; i < 4; ++i) {
+						const auto q = qs[i];
+						
+						double det = std::abs(get_grad_phi_det(eparams, q));
+						auto B = get_B_square(eparams, q);
+
+						auto gradU = get_gradU(uparams, eparams, q);
+						double psi = get_psi(problem.lambda, problem.mu, gradU);
+						pi += psi * det;
+
+						auto psi_J = get_psi_J(problem.lambda, problem.mu, gradU);
+
+						dpi_du += (psi_J * B).transpose() * det;
+
+						auto psi_H = get_psi_H(problem.lambda, problem.mu, gradU);
+						d2pi_du2 += B.transpose() * psi_H * B * det;
+				}
+
+				it.Pi += pi;
+
+				assert(dpi_du.allFinite() && "nan value in dpi_du");
+				assert(d2pi_du2.allFinite() && "nan value in dpi2_d2u");
+
+				// scatter the updates back to the global
+				for (int i = 0; i < 8; ++i) {
+						int ui = uis[i];
+						if (ui < 0) continue; // prescribed
+						it.dPi_du(ui, 0) += dpi_du(i,0);
+				}
+
+				for (int i = 0; i < 8; ++i) {
+						int ui = uis[i];
+						if (ui < 0) continue;
+						for (int j = 0; j < 8; ++j) {
+								int uj = uis[j];
+								if (uj < 0) continue;
+
+								it.sparse_coefficients.push_back({ui, uj, d2pi_du2(i,j)});
+								it.d2Pi_du2(ui, uj) += d2pi_du2(i,j);
+						}
+				}
+		}
+
+		// std::cout << "sparse coefficients size" << sparse_coefficients.size() << "\n";
+		// std::cout << "sparse coefficients factor" << sparse_coefficients.size()/problem.num_dofs << "\n";
+
+		// timer.tock("gradient computation");
+
+		// now update the dofs
+		// if (debug) {
+		// 		std::cout << "Pi was " << it.Pi << "\n";
+		// 		std::cout << "d2Pi_du2 was "
+		// 							<<	it.d2Pi_du2.rows()
+		// 							<< " x "
+		// 							<< it.d2Pi_du2.cols()
+		// 							<< "\n" << it.d2Pi_du2 << "\n";
+		// 		std::cout << "dPi_du was\n" << it.dPi_du.transpose() << "\n";
+		// }
+
+		// timer.tick();
+
+		Eigen::SparseMatrix<double> d2Pi_du2_sparse(problem.num_dofs, problem.num_dofs);
+		d2Pi_du2_sparse.setFromTriplets(it.sparse_coefficients.begin(), it.sparse_coefficients.end());
+
+		Eigen::SimplicialCholesky<Eigen::SparseMatrix<double>> chol(d2Pi_du2_sparse);  // performs a Cholesky factorization of A
+		Eigen::VectorXd dus = chol.solve(-it.dPi_du);
+
+		// timer.tock("solve sparse");
+		// timer.tick();
+				
+		// Eigen::LLT<Eigen::MatrixXd> lltOfA(it.d2Pi_du2);  // compute the Cholesky decomposition of A
+    // Eigen::VectorXd dus = lltOfA.solve(-it.dPi_du);
+
+		// timer.tock("solve");
+		if (debug) {
+				std::cout << "Pi was " << it.Pi << "\n";
+				std::cout << "dus" << dus.transpose();
+		}
+
+		// std::cout << "dus-dus_alt" << (dus - dus_alt).array().abs().maxCoeff() << "\n";
+		
+		it.us += dus;
+		it.last_change = it.Pi - last_Pi;
+
+		timer.tock("update_problem_alt");
 }
 
 double get_psi(double lambd, double mu, const Eigen::Matrix<double, 2, 2>& grad_u) {
@@ -631,6 +877,23 @@ Eigen::Matrix<double, 2, 2> get_gradU(const Eigen::Matrix<double, 8, 1>& uparams
     const auto grad_phie_inv = get_grad_phi_inv(eparams, isocoords);
     return grad_phiu * grad_phie_inv;
 }
+
+// get the Second Piola Kirchoff Stress Tensor
+Eigen::Matrix<double, 2, 2> get_S(const FemProblem& problem, const FemIteration& it,
+																	Eigen::Matrix<double, 2, 1>(*get_prescribed_displacement)(const FemProblem&, int nx, int ny),
+																	int nx, int ny, const Eigen::Matrix<double, 2, 1>& isocoords, Eigen::Matrix2d* gradUptr) {
+		auto nxys = get_nxys(problem.num_ynodes, nx, ny);
+
+ 		// assemble the dofs from global to local
+		Eigen::Matrix<double, 8, 1> uparams = get_uparams(problem, get_prescribed_displacement, it, nxys);
+		Eigen::Matrix<double, 8, 1> eparams = get_eparams(problem, nxys);
+
+		Eigen::Matrix2d& gradU = *gradUptr;
+		gradU = get_gradU(uparams, eparams, isocoords);
+		const Eigen::Matrix2d E = 0.5*(gradU + gradU.transpose() + gradU.transpose()*gradU);
+		return problem.lambda * E.trace() * Eigen::Matrix2d::Identity() + 2*problem.mu * E;
+}
+
 
 Eigen::Matrix<double, 2, 1> local_to_global_deformed(const Eigen::Matrix<double, 8, 1>& uparams, const Eigen::Matrix<double, 8, 1>& eparams, const Eigen::Matrix<double, 2, 1>& isocoords) {
     return get_phi(eparams, isocoords) + get_phi(uparams, isocoords);

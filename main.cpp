@@ -15,7 +15,9 @@
 #include "sokol/sokol_glue.h"
 #include "sokol/sokol_time.h"
 #include "sokol/util/sokol_shape.h"
+#define IMGUI_DEFINE_MATH_OPERATORS
 #include "imgui/imgui.h"
+#include "imgui/imgui_internal.h"
 #include "sokol/util/sokol_imgui.h"
 
 #include "implot/implot.h"
@@ -61,6 +63,47 @@ void init_file_logging() {
     log_file_initted = true;
 }
 
+// complex multiply 2d vectors
+Eigen::Vector2d cmult(const Eigen::Vector2d& z1, const Eigen::Vector2d& z2) {
+		// (a + bi) * (c + di) =   (ac - db) + (ad + bc)i
+		double a = z1(0);
+		double b = z1(1);
+
+		double c = z2(0);
+		double d = z2(1);
+
+		return { (a*c - d*b), (a*d + b*c) };
+}
+
+void implot_segment(const char* name, const Eigen::Vector2d& base, const Eigen::Vector2d& tip) {
+		float xs[2] = { base(0), tip(0) };
+		float ys[2] = { base(1), tip(1) };
+		ImPlot::PlotLine(name, xs, ys, 2);
+}
+
+void implot_triangle(const char* name, const Eigen::Vector2d& p0, const Eigen::Vector2d& p1, const Eigen::Vector2d& p2) {
+		float xs[3] = { p0(0), p1(0), p2(0) };
+		float ys[3] = { p0(1), p1(1), p2(1) };
+		ImPlot::PlotLine(name, xs, ys, 3, ImPlotLineFlags_Loop);
+}
+
+void implot_arrow(const char* name, const Eigen::Vector2d& base, const Eigen::Vector2d& direction, double length, double triangle_length) {
+		// triangle corners, base frame
+		Eigen::Vector2d tleft = {-2, -1};
+		Eigen::Vector2d tright = {-2, 1};
+		Eigen::Vector2d ttip = {0, 0};
+
+		tleft = cmult(direction, tleft)*triangle_length;
+		tright = cmult(direction, tright)*triangle_length;
+		ttip = cmult(direction, ttip)*triangle_length;
+
+		Eigen::Vector2d tip = base + direction*length;
+
+		implot_triangle(name, tip + tleft, tip + tright, tip + ttip);
+		implot_segment(name, base, tip);
+}
+
+
 void init_cb(void) {
     stm_setup();
 
@@ -69,6 +112,7 @@ void init_cb(void) {
     sg_setup(&desc);
 
     simgui_desc_t imgui_desc = {};
+		imgui_desc.ini_filename = "imgui.ini";
     simgui_setup(&imgui_desc);
 
 		ImPlot::CreateContext();
@@ -96,10 +140,8 @@ void init_cb(void) {
 }
 
 void debug_gui() {
-		ImPlot::ShowDemoWindow();
-
-		ImGui::SetNextWindowSize({ 1000, 700 }, ImGuiCond_FirstUseEver);
-    ImGui::Begin("Debug");
+		ImGui::SetNextWindowSize({ 700, 300 }, ImGuiCond_FirstUseEver);
+    ImGui::Begin("Control");
 		ImGui::Text("Pi: %f", problem_it.Pi);
 
 		static bool optimizing = false;
@@ -160,6 +202,50 @@ void debug_gui() {
 				}
 		};
 
+		ImGui::End();
+
+
+		// get the 2nd piola kirchoff stress tensor at the midpoint of the right edge
+		// of the element we're grabbing onto
+		Eigen::Matrix2d gradU;
+		Eigen::Matrix2d S = get_S(problem, problem_it, get_polar_prescribed_displacement,
+															problem.num_xnodes-2, 0,
+															{1, 0}, &gradU);
+
+		Eigen::Vector2d undeformed_lower = get_undeformed_coordinates(problem, problem.num_xnodes-1, 0);
+		Eigen::Vector2d undeformed_upper = get_undeformed_coordinates(problem, problem.num_xnodes-1, 1);
+		Eigen::Vector2d dA = undeformed_upper - undeformed_lower;
+		dA = {-dA(1), dA(0)}; // rotate 90 degrees to get the normal, pointing interior to the material
+													// we want to get the force that our hand feels
+
+		Eigen::Vector2d dn = dA.normalized();
+
+		ImGui::Text("undeformed lower %f, %f", undeformed_lower(0), undeformed_lower(1));
+		ImGui::Text("undeformed upper %f, %f", undeformed_upper(0), undeformed_upper(1));
+		ImGui::Text("dA %f, %f", dA(0), dA(1));
+		ImGui::Text("dn %f, %f", dn(0), dn(1));
+
+		const auto fhat = (S * dA).eval();
+		Eigen::Matrix2d F = Eigen::Matrix2d::Identity() + gradU;
+		const auto force = F*fhat;
+
+		ImGui::Begin("Plots");
+		ImGui::Text("Force %f, %f", force(0), force(1));
+		ImGui::Text("Force Magnitude %f", force.norm());
+
+		Eigen::Vector2d deformed_lower = get_deformed_coordinates(problem, get_polar_prescribed_displacement,
+																															problem_it,
+																															problem.num_xnodes-1, 0);
+		Eigen::Vector2d deformed_upper = get_deformed_coordinates(problem, get_polar_prescribed_displacement,
+																															problem_it,
+																															problem.num_xnodes-1, 1);
+
+
+		ImGui::SetNextWindowSize({ 500, 800 }, ImGuiCond_FirstUseEver);
+
+
+
+
 		static std::vector<double> xs;
 		static std::vector<double> ys;
 		xs.clear();
@@ -168,6 +254,7 @@ void debug_gui() {
 		ImPlot::SetNextAxesLimits(-1.1, 1.1, -1.1, 1.1);
 		if(ImPlot::BeginPlot("Visualization", nullptr, nullptr, {700, 700})) {
 				ImPlot::SetupAxes("x","y");
+
 
 				// vertical lines
 				for (int xi = 0; xi < problem.num_xnodes; ++xi) {
@@ -198,6 +285,8 @@ void debug_gui() {
 				}
 
 
+				ImPlot::PushStyleVar(ImPlotStyleVar_MarkerSize, 2);
+
 				for (int yi = 0; yi < 2; ++yi) {
 						auto current = get_deformed_coordinates(problem,
 																										get_polar_prescribed_displacement,
@@ -209,7 +298,6 @@ void debug_gui() {
 
 				}
 
-
 				const PolarPrescribedDisplacement goal { dr, dtheta };
 				for (int yi = 0; yi < 2; ++yi) {
 						auto undeformed = get_undeformed_coordinates(problem, problem.num_xnodes-1, yi).eval();
@@ -218,6 +306,15 @@ void debug_gui() {
 						float target_y = deformed(1);
 						ImPlot::PlotScatter("Prescribed Target", &target_x, &target_y, 1);
 				}
+
+				ImPlot::PopStyleVar();
+
+				// traction vector
+				implot_arrow("force",
+										 /*base=*/0.5*(deformed_lower + deformed_upper),
+										 /*direction=*/force.normalized(),
+										 /*length=*/force.norm()*0.1,
+										 /*triangle_length=*/0.01);
 
 				ImPlot::EndPlot();
 		}
@@ -231,6 +328,7 @@ void frame_cb(void) {
     frame_desc.height = sapp_height();
     frame_desc.delta_time = sapp_frame_duration();
     frame_desc.dpi_scale = sapp_dpi_scale();
+
     simgui_new_frame(&frame_desc);
 
     static bool should_visualize = false;
@@ -261,8 +359,8 @@ sapp_desc sokol_main(int argc, char* argv[]) {
     desc.frame_cb = frame_cb;
     desc.event_cb = event_cb;
     desc.cleanup_cb = cleanup_cb;
-    desc.width = 1280;
-    desc.height = 720;
+    desc.width = 1680;
+    desc.height = 1000;
     desc.window_title = "Finite Element 2 Project: Rotational Flexure";
     desc.win32_console_create = true;
     return desc;
