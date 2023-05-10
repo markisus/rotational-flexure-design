@@ -69,10 +69,14 @@ Eigen::Matrix<double, 2, 1> get_polar_prescribed_displacement(const FemProblem& 
 				return Eigen::Vector2d::Zero();
 		}
 		else if (nx == problem.num_xnodes-1 && (ny == 0 || ny == 1)) {
-				// outer edge, near theta = 0
-				auto* displacement = static_cast<Eigen::Matrix<double, 2, 1>*>(problem.user_data);
-				return *displacement;
+				auto* polar_displacement = static_cast<PolarPrescribedDisplacement*>(problem.user_data);
+
+				// get the x,y coordinates
+				auto undeformed = get_undeformed_coordinates(problem, nx, ny);
+				return polar_displacement->get_displacement(undeformed);
 		}
+
+		assert(false && "queried polar prescribed displacement of nonprescribed point");
 }
 
 FemProblem create_polar_problem(double r0, double r1, int num_rnodes, int num_thetanodes) {

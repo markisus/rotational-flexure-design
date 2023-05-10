@@ -39,7 +39,7 @@ const ImVec4 white = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
 FemProblem problem;
 FemIteration problem_it {};
 
-Eigen::Matrix<double, 2, 1> prescribed_displacement { 0, 0 };
+PolarPrescribedDisplacement prescribed_displacement {};
 
 sg_pass_action pass_action = {};
 
@@ -88,8 +88,8 @@ void init_cb(void) {
 
 		double r0 = 0.2;
 		double r1 = 1.0;
-		int num_rnodes = 50;
-		int num_thetanodes = 50;
+		int num_rnodes = 20;
+		int num_thetanodes = 100;
 		problem = create_polar_problem(r0, r1, num_rnodes, num_thetanodes);
 		problem.user_data = (void*)(&prescribed_displacement);
 		problem_it = create_fem_it(problem);
@@ -104,18 +104,11 @@ void debug_gui() {
 
 		static bool optimizing = false;
 
-		static float dx = (float)(prescribed_displacement(0,0));
-		static float dy = (float)(prescribed_displacement(1,0));
-
 		static float dr = 0;
-		static float dtheta = 0
-
-		const bool dx_changed = ImGui::SliderFloat("dx",&dx, -0.5f, 0.5f);
-		const bool dy_changed = ImGui::SliderFloat("dy",&dy, -0.5f, 0.5f);
+		static float dtheta = 0;
 
 		const bool dr_changed = ImGui::SliderFloat("dr",&dr, -0.1f, 0.1f);
-		const bool dtheta_changed = ImGui::SliderFloat("dtheta",&dtheta, -M_PI/3, M_PI/3);
-
+		const bool dtheta_changed = ImGui::SliderFloat("dtheta",&dtheta, -M_PI/6.5, M_PI/6.5);
 
 		// partial prescribed displacement for displacement control
 		static Eigen::Vector2d prescribed_displacement_goal = Eigen::Vector2d::Zero();
@@ -129,21 +122,23 @@ void debug_gui() {
 
 		if (ImGui::Button("Reset")) {
 				problem_it.reset();
-				prescribed_displacement.setZero();
+				problem_it.us.setZero();
+				prescribed_displacement.dr = 0;
+				prescribed_displacement.dtheta = 0;
 				set_goal = true;
 		}
 
 		if (set_goal) {
 				// update the goal
-				prescribed_displacement_start = prescribed_displacement;
-				prescribed_displacement_goal << dx, dy;
+				prescribed_displacement_start << prescribed_displacement.dr, prescribed_displacement.dtheta;
+				prescribed_displacement_goal << dr, dtheta;
 				displacement_progress = 0;
 		}
 
 		ImGui::Checkbox("Optimize", &optimizing);
 		if (optimizing) {
 				ImGui::SameLine();
-				ImGui::Text("Currently target displacement %f, %f", prescribed_displacement(0), prescribed_displacement(1));
+				ImGui::Text("Currently target displacement %f, %f", prescribed_displacement.dr, prescribed_displacement.dtheta);
 				ImGui::SameLine();
 				ImGui::Text("Total progress %f", displacement_progress);
 
@@ -154,7 +149,13 @@ void debug_gui() {
 						} else {
 								// update the displacement progress
 								displacement_progress += displacement_step;
-								prescribed_displacement = displacement_progress*prescribed_displacement_goal + (1-displacement_progress)*prescribed_displacement_start;
+								if (displacement_progress >= 1.0) displacement_progress = 1.0;
+								
+								auto goal =(displacement_progress*prescribed_displacement_goal + (1-displacement_progress)*prescribed_displacement_start).eval();
+
+								prescribed_displacement.dr = goal(0);
+								prescribed_displacement.dtheta = goal(1);
+								problem_it.reset();
 						}
 				}
 		};
@@ -197,28 +198,26 @@ void debug_gui() {
 				}
 
 
-				auto current = get_deformed_coordinates(problem,
-																								get_polar_prescribed_displacement,
-																								problem_it,
-																								problem.num_xnodes-1, 0).eval();
-				float current_x = current(0);
-				float current_y = current(1);
+				for (int yi = 0; yi < 2; ++yi) {
+						auto current = get_deformed_coordinates(problem,
+																										get_polar_prescribed_displacement,
+																										problem_it,
+																										problem.num_xnodes-1, yi).eval();
+						float current_x = current(0);
+						float current_y = current(1);
+						ImPlot::PlotScatter("Attachment Points", &current_x, &current_y, 1);
 
-				auto target = get_undeformed_coordinates(problem, problem.num_xnodes-1, 0).eval();
-				target += prescribed_displacement_goal;
+				}
 
-				float target_x = target(0);
-				float target_y = target(1);
-				// ImPlot::PushStyleColor(ImPlotCol_MarkerFill, red);
-				// ImPlot::PushStyleColor(ImPlotCol_MarkerOutline, red);
-				ImPlot::PlotScatter("Prescribed Target", &target_x, &target_y, 1);
-				// ImPlot::PopStyleColor();
-				// ImPlot::PopStyleColor();
 
-				// ImPlot::PushStyleColor(ImPlotCol_MarkerFill, white);
-				ImPlot::PlotScatter("Attachment Point", &current_x, &current_y, 1);
-				// ImPlot::PopStyleColor();
-
+				const PolarPrescribedDisplacement goal { dr, dtheta };
+				for (int yi = 0; yi < 2; ++yi) {
+						auto undeformed = get_undeformed_coordinates(problem, problem.num_xnodes-1, yi).eval();
+						auto deformed = goal.get_displacement(undeformed) + undeformed;
+						float target_x = deformed(0);
+						float target_y = deformed(1);
+						ImPlot::PlotScatter("Prescribed Target", &target_x, &target_y, 1);
+				}
 
 				ImPlot::EndPlot();
 		}

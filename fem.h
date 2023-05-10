@@ -62,6 +62,24 @@ struct FemProblem {
 struct PolarPrescribedDisplacement {
 		double dr = 0;
 		double dtheta = 0;
+
+		Eigen::Vector2d get_displacement(const Eigen::Vector2d& undeformed) const {
+				const double s = std::sin(this->dtheta);
+				const double c = std::cos(this->dtheta);
+
+				Eigen::Vector2d rotated = {
+						c*undeformed(0) - s*undeformed(1),
+						s*undeformed(0) + c*undeformed(1)
+				};
+
+						
+				double undeformed_r = undeformed.norm();
+				double deformed_r = undeformed_r + this->dr;
+
+				rotated *= deformed_r/undeformed_r;
+
+				return rotated - undeformed;
+		}
 };
 
 Eigen::Matrix<double, 2, 1> get_polar_prescribed_displacement(const FemProblem& polar_problem, int nx, int ny);
@@ -84,7 +102,6 @@ struct FemIteration {
 				Pi = std::numeric_limits<float>::infinity(); 
 				d2Pi_du2.setZero();
 				dPi_du.setZero();
-				us.setZero(); // not strictly necessary?
 				sparse_coefficients.clear();
 				last_change = 0;
 		}
