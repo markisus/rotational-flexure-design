@@ -54,7 +54,7 @@ Here we will define a quantitative metric that encodes our intuitive understandi
 
 Let the parameters $p$ encode the geometry of the flexure. For concreteness, assume that we begin with a base finite element mesh with $N$ elements, and $p \in \{0, 1\}^N$, where the bit value $p_i$ determines whether there is material in element $i$ ($p=1$), or whether that element is a void ($p=0$). Given the parameters $p$, we will refer to the resulting candidate flexure as $\Theta_p$.
 
-Now suppose we grab onto a segment of $\Theta_p$ at the outer boundary and prescribe a displacement of this segment through angle $\theta$, say 0.2 radians about the axis of rotation of the flexure, while keeping inner boundary fixed. Figures \ref{before-deformation} and \ref{after-deformation} show such an experiment on a candidate flexure, using the finite element code produced for this project.
+Now suppose we grab onto a segment of $\Theta_p$ at the outer boundary and prescribe a displacement of this segment through angle $\theta$, say 0.2 radians about the axis of rotation of the flexure, while keeping inner boundary fixed. Figures \ref{before-deformation} and \ref{after-deformation} show such an experiment on a candidate flexure, using the finite element code \cite{github} produced for this project.
 
 \begin{figure}[H]
 \begin{center}
@@ -120,13 +120,12 @@ One then produces a flexure design by seeking $p^* = \argmax_p \phi(p)$. For thi
 There are many trivial modifications that can be made to the flexure quality metric. For example, hyperparameters may be selected to scale each integral. Or the absolute values can be replaced with squares. Or the sign of the radial reaction force $f_\text{R}$ can be taken into account. One can play around with the exact formulation of $\phi(p)$ using the building blocks $f_\text{T}$ and $f_\text{R}$ and see which produces the best results. 
 
 Computation of $\phi$ invoves computing $f$ which entails solving a prescribed displacement static equilibrium finite element problem. So it is now becomes important to understand the details of such a problem.
-\newpage
 
 \section{Nonlinear Elasticity}
 \paragraph{}
 We must use nonlinear elasticity. But first it's useful to understand why the theory of infinitesimal elasticity is not sufficient to model a rotational flexure. Suppose a traction $f$ is prescribed at point on the boundary of the flexure. See figure \ref{prescribed-traction-experiment}, where a rotational flexure is depicted abstractly as an annulus.
 
-\begin{figure}[h!]
+\begin{figure}[H]
 \begin{center}
 \includegraphics[width=10cm, keepaspectratio]{prescribed_traction_experiment}
 \caption{Prescribed traction on a Rotational Flexure}
@@ -141,9 +140,64 @@ $$ T = \lambda \Tr(\hat E) I + 2 \mu \hat E \;\; \text{(Hooke's Law)}$$
 
 One then simply replaces the infinitesimal strain tensor $\hat{E} = \frac 1 2 (\nabla u + \nabla u^T)$ with the Green-Lagrange strain tensor $E =\frac 1 2 (\nabla u + \nabla u^T + \nabla u^T \nabla u) $, and replacing the stress tensor $T$ with the $ S$, the $2^\text{nd}$ Piola stress tensor.
 
-$$ S = \lambda \Tr(E) I + 2 \mu E \;\; \text{(St. Venant-Kirchoff Law)}$$. In this project, candidate flexures will be analyzed using the St. Venant-Kirchoff constitutive equation above.
+$$ S = \lambda \Tr(E) I + 2 \mu E \;\; \text{(St. Venant-Kirchoff Law)}$$
 
-\section{Equilibirum Conditions for St. Venant-Kirchoff}
-In the finite element setting, the displacement field $U$ is parameterized by  
+In this project, the flexure quality metric $\phi$ will use the St. Venant-Kirchoff constitutive equation to solve for the reaction forces $f(p,r,\theta)$.
+
+\section{Solving Equilibirum Conditions for St. Venant-Kirchoff}
+Let $\Omega_0 \subset R^2$ be the undeformed body in the plane. Given a displacement field $U : \Omega_0 \rightarrow R^2$ we can compute the strain energy density (with respect to reference area) in the standard way.
+
+$$\Psi(E(\nabla U)) = \frac 1 2 S(E(\nabla U)):E(\nabla U) $$
+$$= \frac 1 2 \text{Tr}(E(\nabla U)^T : S(E(\nabla U))$$
+
+
+In the finite element setting, the displacement field $U$ is parameterized by a finite vector of coefficients $u \in R^{N_\text{dof}}$. $N_\text{dof}$ is known as the degrees of freedom of the displacement field. For our case, the finite element problem associated to flexure quality metric $\phi$ entails a prescribed boundary displacement $\bar U$ on a small segment $\Gamma \subset \delta\Omega_0$ on the boundary of the body. So it is additionaly required that any selection of parameters $u$ satsifies $U(u)|_\Gamma = \bar U$.
+
+Now we may consider the strain energy density to be a function of the parameters $u$ via $\Psi(E(\nabla U(u))) : R^{N_\text{dof}} \rightarrow R$. The total strain energy associated to deformation parameters $u$ is then simply given by the integral $\Pi(u) = \int_{\Omega_0} \Psi(E(\nabla U(u))) dA$. The principle of minimum potential energy states that, at static equilibrium, the parameters $u$ will minimize $\Pi(u)$. Since $\Pi(u)$ is simply a scalar function of real numbers $u_1, \ldots u_{N^\text{dof}}$, we may appeal to the methods of multivariable calculus. In other words, we seek $u^*$ such that $\frac {d Pi} {du}(u^*) = 0$.
+
+Choose an initial guess $u$ for the equilibrium configuration, and an update $\Delta u$, which we desire to be even closer to the equilibrium configuration. Consider the Taylor approximation $\underbrace{\frac {d\Pi}{du} (u + \Delta u)}_{N^\text{dof} \times 1} \approx \underbrace{\frac{d\Pi}{du} (u)}_{N^\text{dof} \times 1} + \underbrace{\frac{d^2\Pi}{du^2}(u)}_{N^\text{dof} \times N^\text{dof}}  \underbrace{\Delta u}_{N^\text{dof} \times 1} $, where the corresponding matrix dimensions have been written in underbraces for convenience. As previously mentioned, our new guess $u + \Delta u$ satisfies equilibrium when we have $\frac {d\Pi}{du} (u + \Delta u) = 0$. Substitution into the Taylor approximation yields  $0 = \frac{d\Pi}{du} (u) + \frac{d^2\Pi}{du^2}(u) \Delta u$. So we have now arrived at a Newton style recursion scheme $u \leftarrow u + {\frac{d^2\Pi}{du^2}(u)}^{-1} (-\frac{d\Pi}{du} (u))$  to minimize the total potential energy of the system.
+
+We can also recognize the form of a stiffness matrix $\frac{d^2\Pi}{du^2}(u)$ and a residual force vector $-\frac{d\Pi}{du} (u)$. Computation of these quantities merely requires repeated applications of chain rule and careful tracking of indices and is described in the previous PowerPoint presentation (available on Courseworks). One proceeds to the finite element formulation in the standard way by first partitioning up the domain $\Omega_0$ into elements, and taking integrals element by element, over an isoparametric parameterization of each element.
+
+The interested reader can consult the PowerPoint presentation or the C++ code (fem.cpp) \cite{github} produced for this project.
+
+\section {Solving for Reaction Force $f(p, r, \theta)$}
+After prescribing the displacement $r, \theta$ on a boundary segment as described in the second section, we use Newton's algorithm, as described in the previous section to compute the equilibrium deformation. Once this is done, we can evaluate the force $f$ acting on the prescribed boundary using $f = S \hat l_0 \hat n$. In this expression $l_0$ is length of the segment (in the undeformed configuration) on which displacement is prescribed, $S = \lambda \Tr(E) I + 2 \mu E$ the $2^\text{nd}$ Piola stress tensor, and $\hat n$ is the normal vector to the boundary segment, pointing inwards into the material.
+
+We now have all the ingredients needed to compute the flexure quality metric $\phi(p)$.
+
+\section{Results}
+Unfortunately I have not yet implemented the genetic optimization algorithm. What I have up to this point is a custom interactive simulator that computes the reaction force $f(p, r, \theta)$ under the St. Venant-Kirchoff model, where $p$ is fixed to be a solid annulus. The finite element routines are from scratch and no external finite element libraries are used. An external library Eigen is used for dense and sparse linear algebra routines.
+
+\section{Algorithm Details and Validation}
+The code associated to this project \cite{github} uses additionally uses displacement control scheme to avoid divergence of the Newton's algorithm. Suppose one wishes to solve for reaction force $f(p, 0.4, 1.0)$. The algorithm first solves $f(p, 0.1, 0.25)$ and uses the solution as an initial guess to solve $f(p, 0.2, 0.5)$ and then $f(p, 0.3, 0.75)$ and finally $f(p, 0.4, 0.1)$.
+
+To validate the implementation, a two dimensional beam of length 5.0, and height 1.0 was modeled along the x-axis. The left edge of the beam was fixed and the right edge of the beam was forced to displace by (0.5, 1.5). Material parameters were $\lambda = 70$, $\mu = 30$. The code from this report was used to solve for the equilibrium configuration and the results were plotted against the solution reported by the open source FEniCS project.
+
+
+\begin{figure}[H]
+\begin{center}
+\includegraphics[width=12cm, keepaspectratio]{fenics_compare}
+\caption{FEniCS Comparison}
+\label{fenics-compare}
+
+Left and right edges of the beam are excluded from the FEniCS solution since they are prescribed.
+
+\end{center}
+\end{figure}
+
+\section{Future Work}
+I hope to finish the genetic optimization portion of the project and finally produce a rotational flexure design.
+
+
+\begin{thebibliography}{9}
+
+\bibitem{github}
+  C++ code for this project. \url{https://github.com/markisus/rotational-flexure-design}.
+
+\bibitem{example-video}
+Control Theory 2023 Project Example Video. \url{https://user-images.githubusercontent.com/469689/237533263-4372a17c-8e5a-4557-977b-fb7895eaed13.mp4}.
+\end{thebibliography}
+
 
 \end{document}

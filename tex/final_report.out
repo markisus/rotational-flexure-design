@@ -1,4 +1,8 @@
 \BOOKMARK [1][-]{section.1}{Introduction}{}% 1
 \BOOKMARK [1][-]{section.2}{Quantifying Flexure Quality}{}% 2
 \BOOKMARK [1][-]{section.3}{Nonlinear Elasticity}{}% 3
-\BOOKMARK [1][-]{section.4}{Equilibirum Conditions for St. Venant-Kirchoff}{}% 4
+\BOOKMARK [1][-]{section.4}{Solving Equilibirum Conditions for St. Venant-Kirchoff}{}% 4
+\BOOKMARK [1][-]{section.5}{Solving for Reaction Force f\(p, r, \)}{}% 5
+\BOOKMARK [1][-]{section.6}{Results}{}% 6
+\BOOKMARK [1][-]{section.7}{Algorithm Details and Validation}{}% 7
+\BOOKMARK [1][-]{section.8}{Future Work}{}% 8

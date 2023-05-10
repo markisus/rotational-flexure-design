@@ -268,7 +268,7 @@ void debug_gui() {
 								xs.push_back(xy(0));
 								ys.push_back(xy(1));
 						}
-						ImPlot::PlotLine("Contour (deformed)", xs.data(), ys.data(), xs.size());
+						ImPlot::PlotLine("FEM Mesh", xs.data(), ys.data(), xs.size());
 				}
 
 				// horizontal lines
@@ -281,7 +281,7 @@ void debug_gui() {
 								xs.push_back(xy(0));
 								ys.push_back(xy(1));
 						}
-						ImPlot::PlotLine("Contour (deformed)", xs.data(), ys.data(), xs.size());
+						ImPlot::PlotLine("FEM Mesh", xs.data(), ys.data(), xs.size());
 				}
 
 
