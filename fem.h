@@ -59,6 +59,11 @@ struct FemProblem {
 		void* user_data = nullptr;
 };
 
+struct PolarPrescribedDisplacement {
+		double dr = 0;
+		double dtheta = 0;
+};
+
 Eigen::Matrix<double, 2, 1> get_polar_prescribed_displacement(const FemProblem& polar_problem, int nx, int ny);
 Eigen::Matrix<double, 2, 1> get_toy_prescribed_displacement(const FemProblem& toy_problem, int nx, int ny);
 FemProblem create_polar_problem(double r0, double r1, int num_rnodes, int num_thetanodes);
@@ -90,6 +95,7 @@ FemIteration create_fem_it(const FemProblem& problem);
 
 
 Eigen::Vector2d get_deformed_coordinates(const FemProblem& problem, Eigen::Matrix<double, 2, 1>(*get_prescribed_displacement)(const FemProblem&, int nx, int ny), FemIteration& it, int nx, int ny);
+Eigen::Vector2d get_undeformed_coordinates(const FemProblem& problem, int nx, int ny);
 
 void update_problem(const FemProblem& problem, Eigen::Matrix<double, 2, 1>(*get_prescribed_displacement)(const FemProblem&, int nx, int ny), FemIteration& it);
 

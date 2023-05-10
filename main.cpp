@@ -22,11 +22,24 @@
 
 #include "fem.h"
 
+#define M_PI 3.14159265358979323846
+
+const ImVec4 red = ImVec4(0.8f, 0.1f, 0.1f, 1.0f);
+const ImVec4 green = ImVec4(0.2f, 0.7f, 0.2f, 1.0f);
+const ImVec4 blue = ImVec4(0.1f, 0.4f, 0.8f, 1.0f);
+const ImVec4 orange = ImVec4(0.9f, 0.5f, 0.2f, 1.0f);
+const ImVec4 purple = ImVec4(0.6f, 0.1f, 0.7f, 1.0f);
+const ImVec4 yellow = ImVec4(0.9f, 0.9f, 0.2f, 1.0f);
+const ImVec4 cyan = ImVec4(0.1f, 0.7f, 0.7f, 1.0f);
+const ImVec4 magenta = ImVec4(0.7f, 0.1f, 0.5f, 1.0f);
+const ImVec4 gray = ImVec4(0.5f, 0.5f, 0.5f, 1.0f);
+const ImVec4 black = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
+const ImVec4 white = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
 
 FemProblem problem;
 FemIteration problem_it {};
 
-Eigen::Matrix<double, 2, 1> toy_displacement { 0, 0 };
+Eigen::Matrix<double, 2, 1> prescribed_displacement { 0, 0 };
 
 sg_pass_action pass_action = {};
 
@@ -78,31 +91,71 @@ void init_cb(void) {
 		int num_rnodes = 50;
 		int num_thetanodes = 50;
 		problem = create_polar_problem(r0, r1, num_rnodes, num_thetanodes);
-		problem.user_data = (void*)(&toy_displacement);
+		problem.user_data = (void*)(&prescribed_displacement);
 		problem_it = create_fem_it(problem);
 }
 
 void debug_gui() {
 		ImPlot::ShowDemoWindow();
-		
+
+		ImGui::SetNextWindowSize({ 1000, 700 }, ImGuiCond_FirstUseEver);
     ImGui::Begin("Debug");
 		ImGui::Text("Pi: %f", problem_it.Pi);
 
 		static bool optimizing = false;
 
-		static float dx = (float)(toy_displacement(0,0));
-		static float dy = (float)(toy_displacement(1,0));
+		static float dx = (float)(prescribed_displacement(0,0));
+		static float dy = (float)(prescribed_displacement(1,0));
+
+		static float dr = 0;
+		static float dtheta = 0
 
 		const bool dx_changed = ImGui::SliderFloat("dx",&dx, -0.5f, 0.5f);
 		const bool dy_changed = ImGui::SliderFloat("dy",&dy, -0.5f, 0.5f);
 
-		toy_displacement << dx, dy;
+		const bool dr_changed = ImGui::SliderFloat("dr",&dr, -0.1f, 0.1f);
+		const bool dtheta_changed = ImGui::SliderFloat("dtheta",&dtheta, -M_PI/3, M_PI/3);
+
+
+		// partial prescribed displacement for displacement control
+		static Eigen::Vector2d prescribed_displacement_goal = Eigen::Vector2d::Zero();
+		static Eigen::Vector2d prescribed_displacement_start = Eigen::Vector2d::Zero();
+		static double displacement_progress = 0;
+		static float displacement_step = 0.1;
+
+		ImGui::SliderFloat("Displacement step", &displacement_step, 0.01, 0.2);
+
+		bool set_goal = dr_changed || dtheta_changed;
+
+		if (ImGui::Button("Reset")) {
+				problem_it.reset();
+				prescribed_displacement.setZero();
+				set_goal = true;
+		}
+
+		if (set_goal) {
+				// update the goal
+				prescribed_displacement_start = prescribed_displacement;
+				prescribed_displacement_goal << dx, dy;
+				displacement_progress = 0;
+		}
 
 		ImGui::Checkbox("Optimize", &optimizing);
 		if (optimizing) {
+				ImGui::SameLine();
+				ImGui::Text("Currently target displacement %f, %f", prescribed_displacement(0), prescribed_displacement(1));
+				ImGui::SameLine();
+				ImGui::Text("Total progress %f", displacement_progress);
+
 				update_problem(problem, get_polar_prescribed_displacement, problem_it);
 				if (std::abs(problem_it.last_change) < 1e-3) {
-						optimizing = false;
+						if (displacement_progress >= 1.0) {
+								optimizing = false;
+						} else {
+								// update the displacement progress
+								displacement_progress += displacement_step;
+								prescribed_displacement = displacement_progress*prescribed_displacement_goal + (1-displacement_progress)*prescribed_displacement_start;
+						}
 				}
 		};
 
@@ -110,8 +163,9 @@ void debug_gui() {
 		static std::vector<double> ys;
 		xs.clear();
 		ys.clear();
-		
-		if(ImPlot::BeginPlot("Visualization")) {
+
+		ImPlot::SetNextAxesLimits(-1.1, 1.1, -1.1, 1.1);
+		if(ImPlot::BeginPlot("Visualization", nullptr, nullptr, {700, 700})) {
 				ImPlot::SetupAxes("x","y");
 
 				// vertical lines
@@ -122,7 +176,7 @@ void debug_gui() {
 						int ymax = problem.is_polar ? problem.num_ynodes+1 : problem.num_ynodes;
 						for (int yi = 0; yi < ymax; ++yi) {
 								auto xy = get_deformed_coordinates(
-										problem, get_toy_prescribed_displacement, problem_it, xi, yi%problem.num_ynodes);
+										problem, get_polar_prescribed_displacement, problem_it, xi, yi%problem.num_ynodes);
 								xs.push_back(xy(0));
 								ys.push_back(xy(1));
 						}
@@ -135,12 +189,36 @@ void debug_gui() {
 						ys.clear();
 						for (int xi = 0; xi < problem.num_xnodes; ++xi) {				
 								auto xy = get_deformed_coordinates(
-										problem, get_toy_prescribed_displacement, problem_it, xi, yi);
+										problem, get_polar_prescribed_displacement, problem_it, xi, yi);
 								xs.push_back(xy(0));
 								ys.push_back(xy(1));
 						}
 						ImPlot::PlotLine("Contour (deformed)", xs.data(), ys.data(), xs.size());
 				}
+
+
+				auto current = get_deformed_coordinates(problem,
+																								get_polar_prescribed_displacement,
+																								problem_it,
+																								problem.num_xnodes-1, 0).eval();
+				float current_x = current(0);
+				float current_y = current(1);
+
+				auto target = get_undeformed_coordinates(problem, problem.num_xnodes-1, 0).eval();
+				target += prescribed_displacement_goal;
+
+				float target_x = target(0);
+				float target_y = target(1);
+				// ImPlot::PushStyleColor(ImPlotCol_MarkerFill, red);
+				// ImPlot::PushStyleColor(ImPlotCol_MarkerOutline, red);
+				ImPlot::PlotScatter("Prescribed Target", &target_x, &target_y, 1);
+				// ImPlot::PopStyleColor();
+				// ImPlot::PopStyleColor();
+
+				// ImPlot::PushStyleColor(ImPlotCol_MarkerFill, white);
+				ImPlot::PlotScatter("Attachment Point", &current_x, &current_y, 1);
+				// ImPlot::PopStyleColor();
+
 
 				ImPlot::EndPlot();
 		}

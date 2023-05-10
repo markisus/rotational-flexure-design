@@ -165,6 +165,10 @@ FemIteration create_fem_it(const FemProblem& problem) {
 		
 }
 
+Eigen::Vector2d get_undeformed_coordinates(const FemProblem& problem, int nx, int ny) {
+		return { problem.node_xs[problem.num_xnodes*ny + nx], problem.node_ys[problem.num_xnodes*ny + nx] };
+}
+
 Eigen::Vector2d get_deformed_coordinates(const FemProblem& problem, Eigen::Matrix<double, 2, 1>(*get_prescribed_displacement)(const FemProblem&, int nx, int ny), FemIteration& it, int nx, int ny) {
 		assert(it.us.rows() != 0 && "fem iteration not initialized");
 
