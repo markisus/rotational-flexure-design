@@ -2,6 +2,5 @@
 Rotational Flexure Design
 
 
-
-https://github.com/markisus/rotational-flexure-design/assets/469689/16afcdd4-92f6-43bb-8e03-c7120a7794b5
+https://github.com/markisus/rotational-flexure-design/assets/469689/4372a17c-8e5a-4557-977b-fb7895eaed13
 
