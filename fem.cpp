@@ -97,6 +97,8 @@ FemProblem create_toy_problem(double length_x, double length_y, int num_xnodes, 
 		problem.node_xs.resize(num_xnodes*num_ynodes);
 		problem.node_ys.resize(num_xnodes*num_ynodes);
 
+		const int num_elements = (num_xnodes-1)*(num_ynodes-1);
+		problem.active_elements.resize(num_elements, 1);
 
 		// make the dof map
 		int next_var_idx = 0;
@@ -160,6 +162,8 @@ FemProblem create_polar_problem(double r0, double r1, int num_rnodes, int num_th
 		problem.node_xs.resize(num_xnodes*num_ynodes);
 		problem.node_ys.resize(num_xnodes*num_ynodes);
 
+		const int num_elements = (num_xnodes-1)*num_ynodes;
+		problem.active_elements.resize(num_elements, 1);
 
 		// make the dof map
 		int next_var_idx = 0;
@@ -322,6 +326,25 @@ Eigen::Matrix<double, 8, 1> get_eparams(const FemProblem& problem, const std::ar
 		return eparams;
 }
 
+bool is_element_active(const FemProblem& problem, int eix, int eiy) {
+		// polar case
+		// max idx = (num_xnodes - 1) * (num_ynodes-1) + num_xnodes - 2
+		//         = (num_xnodes - 1) * (num_ynodes-1) + (num_xnodes-1) - 1
+		//         = (num_xnodes - 1) * (num_ynodes-1+1) - 1
+		//         = (num_xnodes - 1) * (num_ynodes) - 1
+		//         = num_els - 1
+		//
+		// nonpolar case
+		// max idx = (num_xnodes - 1) * (num_ynodes-2) + num_xnodes - 2
+		//         = (num_xnodes - 1) * (num_ynodes-2) + (num_xnodes - 1) - 1
+		//         = (num_xnodes - 1) * (num_ynodes-2+1) - 1
+		//         = (num_xnodes - 1) * (num_ynodes-1) - 1
+		//         = num_els - 1
+
+		const bool element_active = problem.active_elements[(problem.num_xnodes-1)*eix + eiy];
+		return element_active;
+}
+
 void update_problem(const FemProblem& problem, Eigen::Matrix<double, 2, 1>(*get_prescribed_displacement)(const FemProblem&, int nx, int ny), FemIteration& it) {
 		// TickTock timer;
 		// timer.tick();
@@ -342,8 +365,6 @@ void update_problem(const FemProblem& problem, Eigen::Matrix<double, 2, 1>(*get_
 		it.sparse_coefficients.clear();
 		it.sparse_coefficients.reserve(problem.num_dofs*28);
 
-
-
 		constexpr bool debug = false;
 
 		// timer.tick();
@@ -357,6 +378,9 @@ void update_problem(const FemProblem& problem, Eigen::Matrix<double, 2, 1>(*get_
 		
 		for (int nx = 0; nx < problem.num_xnodes-1; ++nx) {
 				for (int ny=0; ny < ny_upper_bound; ++ny) {
+
+						const bool element_active = is_element_active(problem, nx, ny);
+						
 						// the corners of the element
 						// the mod % below is no-op in non-polar mode
 						// in polar mode, it just implements the wrap-around on the last element
@@ -412,10 +436,16 @@ void update_problem(const FemProblem& problem, Eigen::Matrix<double, 2, 1>(*get_
                     d2pi_du2 += B_square.transpose() * psi_H * B_square * det;
 								}
 
-								it.Pi += pi;
-
 								assert(dpi_du.allFinite() && "nan value in dpi_du");
 								assert(d2pi_du2.allFinite() && "nan value in dpi2_d2u");
+
+								if (!is_element_active) {
+										dpi_du *= 1e-6;
+										d2pi_du2 *= 1e-6;
+										pi *= 1e-6;
+								}
+
+								it.Pi += pi;
 
 								// scatter the updates back to the global
 								for (int i = 0; i < 8; ++i) {
@@ -451,7 +481,6 @@ void update_problem(const FemProblem& problem, Eigen::Matrix<double, 2, 1>(*get_
 
 								double psi = get_psi(problem.lambda, problem.mu, gradU);
 								double pi = psi * element_area;
-								it.Pi += pi;
 
 								auto psi_J = get_psi_J(problem.lambda, problem.mu, gradU);
 								Eigen::Matrix<double, 8, 1> dpi_du = (psi_J * B_square).transpose() * element_area;
@@ -459,6 +488,13 @@ void update_problem(const FemProblem& problem, Eigen::Matrix<double, 2, 1>(*get_
 								auto psi_H = get_psi_H(problem.lambda, problem.mu, gradU);
 								Eigen::Matrix<double, 8, 8> d2pi_du2 = B_square.transpose() * psi_H * B_square * element_area;
 
+								if (!is_element_active) {
+										dpi_du *= 1e-6;
+										d2pi_du2 *= 1e-6;
+										pi *= 1e-6;
+								}
+
+								it.Pi += pi;
 
 								for (int i = 0; i < 8; ++i) {
 										int ui = uis[i];

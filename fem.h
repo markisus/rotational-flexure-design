@@ -2,6 +2,7 @@
 
 #include "Eigen/Dense"
 #include "Eigen/Sparse"
+#include <cstdint>
 #include <limits>
 
 
@@ -40,13 +41,15 @@ struct FemProblem {
 		double length_y;
 		int num_xnodes;
 		int num_ynodes;
-		int num_dofs;
+		int num_dofs = 0;
 
 		std::vector<int> ux_dof_idxs;
 		std::vector<int> uy_dof_idxs;
 
 		std::vector<double> node_xs;
 		std::vector<double> node_ys;
+
+		std::vector<uint8_t> active_elements;
 
 		// unused (?)
 		// the information above, in element format
